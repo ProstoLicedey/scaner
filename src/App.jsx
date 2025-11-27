@@ -52,7 +52,7 @@ function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1>Document Scanner</h1>
+        <h1>Scaner</h1>
         <p>Загрузите фото документа для обработки</p>
       </header>
 
@@ -100,6 +100,14 @@ function App() {
           </div>
         )}
       </main>
+
+      <footer className="app-footer">
+        <p>
+          <a href="https://t.me/prosto_licedey" target="_blank" rel="noopener noreferrer">
+            ©Михаил Максимов 2025
+          </a>
+        </p>
+      </footer>
     </div>
   )
 }

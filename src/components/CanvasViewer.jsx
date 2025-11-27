@@ -23,7 +23,6 @@ function CanvasViewer({ originalImage, processedImage, filters }) {
 
     try {
       if (showOriginal && originalImage) {
-        // Показываем оригинальное изображение
         const img = new Image()
         img.onload = () => {
           canvas.width = img.width
@@ -36,7 +35,6 @@ function CanvasViewer({ originalImage, processedImage, filters }) {
         }
         img.src = originalImage
       } else {
-        // Показываем обработанное изображение с фильтрами
         if (!(processedImage instanceof HTMLCanvasElement)) {
           setIsProcessing(false)
           return
@@ -45,73 +43,22 @@ function CanvasViewer({ originalImage, processedImage, filters }) {
         canvas.width = processedImage.width
         canvas.height = processedImage.height
 
-        // Получаем ImageData из canvas
-        try {
-          const sourceCtx = processedImage.getContext('2d')
-          if (!sourceCtx) {
-            throw new Error('Не удалось получить контекст из processedImage')
-          }
-          
-          const imageData = sourceCtx.getImageData(
-            0,
-            0,
-            processedImage.width,
-            processedImage.height
-          )
-
-          // Применяем фильтры
-          const filteredData = applyAllFilters(imageData, filters)
-
-          // Рисуем на canvas
-          ctx.putImageData(filteredData, 0, 0)
-          
-          // Проверяем, что canvas действительно содержит данные
-          const verifyData = ctx.getImageData(0, 0, Math.min(10, canvas.width), Math.min(10, canvas.height))
-          const hasData = verifyData.data.some((val, idx) => idx % 4 !== 3 && val !== 0)
-          
-          if (!hasData) {
-            // Пробуем нарисовать напрямую
-            ctx.clearRect(0, 0, canvas.width, canvas.height)
-            ctx.drawImage(processedImage, 0, 0)
-            const imageData2 = ctx.getImageData(0, 0, canvas.width, canvas.height)
-            const filteredData2 = applyAllFilters(imageData2, filters)
-            ctx.putImageData(filteredData2, 0, 0)
-          }
-          
+        // Получаем ImageData и применяем фильтры
+        const sourceCtx = processedImage.getContext('2d')
+        if (!sourceCtx) {
           setIsProcessing(false)
-        } catch (error) {
-          // Пробуем альтернативный метод
-          try {
-            ctx.clearRect(0, 0, canvas.width, canvas.height)
-            ctx.drawImage(processedImage, 0, 0)
-            
-            // Проверяем, что что-то нарисовалось
-            const checkData = ctx.getImageData(0, 0, Math.min(10, canvas.width), Math.min(10, canvas.height))
-            const hasData = checkData.data.some((val, idx) => idx % 4 !== 3 && val !== 0)
-            
-            if (hasData) {
-              const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
-              const filteredData = applyAllFilters(imageData, filters)
-              ctx.putImageData(filteredData, 0, 0)
-            }
-          } catch (altError) {
-            // Игнорируем ошибки альтернативного метода
-          }
-          setIsProcessing(false)
+          return
         }
+
+        const imageData = sourceCtx.getImageData(0, 0, processedImage.width, processedImage.height)
+        const filteredData = applyAllFilters(imageData, filters)
+        ctx.putImageData(filteredData, 0, 0)
+
+        setIsProcessing(false)
       }
     } catch (error) {
       setIsProcessing(false)
     }
-  }
-
-  const handleDownload = () => {
-    if (!canvasRef.current) return
-
-    const link = document.createElement('a')
-    link.download = 'processed-document.png'
-    link.href = canvasRef.current.toDataURL('image/png')
-    link.click()
   }
 
   return (
@@ -141,4 +88,3 @@ function CanvasViewer({ originalImage, processedImage, filters }) {
 }
 
 export default CanvasViewer
-

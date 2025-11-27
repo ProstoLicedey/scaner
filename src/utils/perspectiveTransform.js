@@ -1,76 +1,51 @@
-/**
- * Перспективная трансформация изображения
- * Используется более точный метод через билинейную интерполяцию
- */
-export function transformPerspective(imageElement, corners, outputWidth, outputHeight) {
-  // Используем более точную реализацию через transformPerspectiveCanvas
-  return transformPerspectiveCanvas(imageElement, corners, outputWidth, outputHeight)
+// Вычисляет оптимальные размеры выходного изображения на основе углов
+export function calculateOptimalOutputSize(corners) {
+  if (!corners || corners.length !== 4) {
+    return { width: 800, height: 1000 }
+  }
+
+  // Вычисляем длины сторон четырехугольника
+  const topWidth = Math.sqrt(
+    Math.pow(corners[1].x - corners[0].x, 2) + 
+    Math.pow(corners[1].y - corners[0].y, 2)
+  )
+  const bottomWidth = Math.sqrt(
+    Math.pow(corners[2].x - corners[3].x, 2) + 
+    Math.pow(corners[2].y - corners[3].y, 2)
+  )
+  const leftHeight = Math.sqrt(
+    Math.pow(corners[3].x - corners[0].x, 2) + 
+    Math.pow(corners[3].y - corners[0].y, 2)
+  )
+  const rightHeight = Math.sqrt(
+    Math.pow(corners[2].x - corners[1].x, 2) + 
+    Math.pow(corners[2].y - corners[1].y, 2)
+  )
+
+  // Используем средние значения для правильных пропорций
+  const avgWidth = (topWidth + bottomWidth) / 2
+  const avgHeight = (leftHeight + rightHeight) / 2
+
+  // Добавляем 1% запас, чтобы ничего не обрезалось
+  const width = Math.ceil(avgWidth * 1.01)
+  const height = Math.ceil(avgHeight * 1.01)
+
+  const minSize = 100
+  return {
+    width: Math.max(minSize, width),
+    height: Math.max(minSize, height)
+  }
 }
 
-/**
- * Вычисляет матрицу перспективной трансформации
- */
-function calculatePerspectiveMatrix(src, dst) {
-  // Упрощенная версия - используем более простой подход
-  // Для точной перспективной трансформации нужна полная матрица 3x3
-  
-  // Вычисляем ширину и высоту исходного и целевого прямоугольников
-  const srcWidth = Math.max(
-    Math.abs(src[1].x - src[0].x),
-    Math.abs(src[2].x - src[3].x)
-  )
-  const srcHeight = Math.max(
-    Math.abs(src[3].y - src[0].y),
-    Math.abs(src[2].y - src[1].y)
-  )
-
-  const dstWidth = dst[1].x - dst[0].x
-  const dstHeight = dst[3].y - dst[0].y
-
-  // Используем более простой метод - билинейную интерполяцию
-  return [1, 0, 0, 0, 1, 0, 0, 0]
-}
-
-/**
- * Получает матрицу перспективной трансформации (упрощенная версия)
- */
-function getPerspectiveTransform(src, dst) {
-  // Для упрощения используем аффинную трансформацию
-  // В реальном приложении нужна полная перспективная матрица 3x3
-  
-  // Вычисляем масштаб
-  const srcWidth = Math.sqrt(
-    Math.pow(src[1].x - src[0].x, 2) + Math.pow(src[1].y - src[0].y, 2)
-  )
-  const srcHeight = Math.sqrt(
-    Math.pow(src[3].x - src[0].x, 2) + Math.pow(src[3].y - src[0].y, 2)
-  )
-
-  const dstWidth = dst[1].x - dst[0].x
-  const dstHeight = dst[3].y - dst[0].y
-
-  const scaleX = dstWidth / srcWidth
-  const scaleY = dstHeight / srcHeight
-
-  // Вычисляем смещение
-  const offsetX = dst[0].x - src[0].x * scaleX
-  const offsetY = dst[0].y - src[0].y * scaleY
-
-  return [scaleX, 0, offsetX, 0, scaleY, offsetY, 0, 0]
-}
-
-/**
- * Более точная перспективная трансформация с использованием Canvas API
- */
+// Перспективная трансформация изображения
 export function transformPerspectiveCanvas(imageElement, corners, outputWidth, outputHeight) {
   return new Promise((resolve, reject) => {
-    // Валидация входных данных
     if (!corners || corners.length !== 4) {
       reject(new Error('Неверное количество углов'))
       return
     }
 
-    // Проверяем, что углы валидны
+    // Проверяем валидность углов
     for (let i = 0; i < corners.length; i++) {
       if (typeof corners[i].x !== 'number' || typeof corners[i].y !== 'number' ||
           isNaN(corners[i].x) || isNaN(corners[i].y)) {
@@ -86,11 +61,10 @@ export function transformPerspectiveCanvas(imageElement, corners, outputWidth, o
     canvas.height = height
     const ctx = canvas.getContext('2d')
 
-    // Заполняем белым фоном на случай, если трансформация не покроет весь canvas
+    // Заполняем белым фоном
     ctx.fillStyle = '#FFFFFF'
     ctx.fillRect(0, 0, width, height)
 
-    // Используем более точный метод с ручной интерполяцией
     const image = new Image()
     image.onload = () => {
       try {
@@ -104,7 +78,7 @@ export function transformPerspectiveCanvas(imageElement, corners, outputWidth, o
         const srcData = srcCtx.getImageData(0, 0, srcCanvas.width, srcCanvas.height)
         const dstData = ctx.createImageData(width, height)
 
-        // Инициализируем dstData белым цветом
+        // Инициализируем белым цветом
         for (let i = 0; i < dstData.data.length; i += 4) {
           dstData.data[i] = 255     // R
           dstData.data[i + 1] = 255 // G
@@ -112,12 +86,10 @@ export function transformPerspectiveCanvas(imageElement, corners, outputWidth, o
           dstData.data[i + 3] = 255 // A
         }
 
-        let pixelsDrawn = 0
-
         // Перспективная трансформация через обратное преобразование
         for (let y = 0; y < height; y++) {
           for (let x = 0; x < width; x++) {
-            // Вычисляем соответствующие координаты в исходном изображении
+            // Находим соответствующие координаты в исходном изображении
             const srcCoords = inversePerspectiveTransform(corners, x, y, width, height)
             const srcX = srcCoords.x
             const srcY = srcCoords.y
@@ -131,7 +103,6 @@ export function transformPerspectiveCanvas(imageElement, corners, outputWidth, o
                 dstData.data[dstIndex + 1] = pixel.g
                 dstData.data[dstIndex + 2] = pixel.b
                 dstData.data[dstIndex + 3] = pixel.a
-                pixelsDrawn++
               } catch (pixelError) {
                 // Игнорируем ошибки отдельных пикселей
               }
@@ -139,18 +110,10 @@ export function transformPerspectiveCanvas(imageElement, corners, outputWidth, o
           }
         }
 
-        if (pixelsDrawn === 0) {
-          // Fallback: просто рисуем исходное изображение
-          ctx.clearRect(0, 0, width, height)
-          ctx.drawImage(image, 0, 0, width, height)
-          resolve(canvas)
-          return
-        }
-
         ctx.putImageData(dstData, 0, 0)
         resolve(canvas)
       } catch (error) {
-        // Fallback: просто рисуем исходное изображение
+        // Fallback: рисуем исходное изображение
         ctx.clearRect(0, 0, width, height)
         ctx.drawImage(image, 0, 0, width, height)
         resolve(canvas)
@@ -163,21 +126,17 @@ export function transformPerspectiveCanvas(imageElement, corners, outputWidth, o
   })
 }
 
-/**
- * Билинейная интерполяция для перспективной трансформации
- */
+// Билинейная интерполяция между четырьмя точками
 function bilinearInterpolation(topLeft, topRight, bottomLeft, bottomRight, u, v) {
   const top = topLeft + (topRight - topLeft) * u
   const bottom = bottomLeft + (bottomRight - bottomLeft) * u
   return top + (bottom - top) * v
 }
 
-/**
- * Вычисляет обратную перспективную трансформацию
- * Находит координаты в исходном изображении для точки в целевом
- */
+// Вычисляет обратную перспективную трансформацию
+// Находит координаты в исходном изображении для точки в целевом
 function inversePerspectiveTransform(corners, x, y, width, height) {
-  // Нормализованные координаты в целевом прямоугольнике
+  // Нормализованные координаты (0-1)
   const u = x / width
   const v = y / height
 
@@ -196,6 +155,7 @@ function inversePerspectiveTransform(corners, x, y, width, height) {
   return { x: srcX, y: srcY }
 }
 
+// Получает пиксель с билинейной интерполяцией
 function getBilinearPixel(imageData, x, y) {
   const x1 = Math.floor(x)
   const y1 = Math.floor(y)
@@ -220,6 +180,7 @@ function getBilinearPixel(imageData, x, y) {
   const p12 = getPixel(x1, y2)
   const p22 = getPixel(x2, y2)
 
+  // Билинейная интерполяция
   const r = Math.round(
     p11.r * (1 - fx) * (1 - fy) +
     p21.r * fx * (1 - fy) +
@@ -247,4 +208,3 @@ function getBilinearPixel(imageData, x, y) {
 
   return { r, g, b, a }
 }
-

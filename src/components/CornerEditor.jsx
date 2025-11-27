@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { detectCorners, detectCornersSimple } from '../utils/cornerDetection'
-import { transformPerspectiveCanvas } from '../utils/perspectiveTransform'
+import { transformPerspectiveCanvas, calculateOptimalOutputSize } from '../utils/perspectiveTransform'
 import LoadingOverlay from './LoadingOverlay'
 import './CornerEditor.css'
 
@@ -29,7 +29,6 @@ function CornerEditor({ imageUrl, onCornersDetected, onCornersEdited, onTransfor
   const detectCornersAutomatically = async () => {
     if (!imageRef.current) return
 
-    // Ждем загрузки изображения
     if (!imageRef.current.complete || imageRef.current.naturalWidth === 0) {
       imageRef.current.onload = () => {
         detectCornersAutomatically()
@@ -39,7 +38,6 @@ function CornerEditor({ imageUrl, onCornersDetected, onCornersEdited, onTransfor
 
     setIsDetecting(true)
     try {
-      // Загружаем OpenCV.js если еще не загружен
       if (typeof cv === 'undefined' || !cv.Mat || !cv.imread) {
         await loadOpenCV()
       }
@@ -53,7 +51,6 @@ function CornerEditor({ imageUrl, onCornersDetected, onCornersEdited, onTransfor
       setCorners(detectedCorners)
       onCornersDetected?.(detectedCorners)
     } catch (error) {
-      // Устанавливаем углы по умолчанию
       const defaultCorners = [
         { x: 0, y: 0 },
         { x: imageRef.current.width, y: 0 },
@@ -70,16 +67,13 @@ function CornerEditor({ imageUrl, onCornersDetected, onCornersEdited, onTransfor
 
   const loadOpenCV = () => {
     return new Promise((resolve, reject) => {
-      // Проверяем, уже загружен ли OpenCV
       if (typeof cv !== 'undefined' && cv.Mat && cv.imread) {
         resolve()
         return
       }
 
-      // Проверяем, не загружается ли уже
       const existingScript = document.querySelector('script[src*="opencv"]')
       if (existingScript) {
-        // Ждем загрузки
         const checkInterval = setInterval(() => {
           if (typeof cv !== 'undefined' && cv.Mat && cv.imread) {
             clearInterval(checkInterval)
@@ -89,38 +83,34 @@ function CornerEditor({ imageUrl, onCornersDetected, onCornersEdited, onTransfor
         setTimeout(() => {
           clearInterval(checkInterval)
           reject(new Error('Таймаут загрузки OpenCV.js'))
-        }, 60000) // Увеличиваем таймаут до 60 секунд
+        }, 60000)
         return
       }
 
-      // Загружаем OpenCV.js с правильного CDN
-      // Пробуем несколько источников
       const opencvSources = [
         'https://docs.opencv.org/4.8.0/opencv.js',
         'https://cdn.jsdelivr.net/npm/opencv-js@1.2.1/dist/opencv.js',
         'https://unpkg.com/opencv-js@1.2.1/dist/opencv.js'
       ]
-      
+
       let sourceIndex = 0
       const tryLoadSource = () => {
         if (sourceIndex >= opencvSources.length) {
-          reject(new Error('Не удалось загрузить OpenCV.js ни из одного источника'))
+          reject(new Error('Не удалось загрузить OpenCV.js'))
           return
         }
-        
+
         const script = document.createElement('script')
         script.src = opencvSources[sourceIndex]
-        script.async = false // Важно: не async для правильной инициализации
+        script.async = false
         script.type = 'text/javascript'
-      
+
         script.onload = () => {
-          // Ждем инициализации OpenCV
           if (cv && cv.onRuntimeInitialized) {
             cv.onRuntimeInitialized = () => {
               resolve()
             }
           } else {
-            // Если onRuntimeInitialized уже был вызван
             const checkInit = setInterval(() => {
               if (typeof cv !== 'undefined' && cv.Mat && cv.imread) {
                 clearInterval(checkInit)
@@ -132,22 +122,21 @@ function CornerEditor({ imageUrl, onCornersDetected, onCornersEdited, onTransfor
               if (typeof cv !== 'undefined' && cv.Mat && cv.imread) {
                 resolve()
               } else {
-                // Пробуем следующий источник
                 sourceIndex++
                 tryLoadSource()
               }
             }, 5000)
           }
         }
-        
+
         script.onerror = () => {
           sourceIndex++
           tryLoadSource()
         }
-        
+
         document.head.appendChild(script)
       }
-      
+
       tryLoadSource()
     })
   }
@@ -159,11 +148,8 @@ function CornerEditor({ imageUrl, onCornersDetected, onCornersEdited, onTransfor
     const ctx = canvas.getContext('2d')
     const img = imageRef.current
 
-    // Устанавливаем размеры canvas
     canvas.width = img.width
     canvas.height = img.height
-
-    // Рисуем изображение
     ctx.drawImage(img, 0, 0)
 
     // Рисуем линии между углами
@@ -193,23 +179,28 @@ function CornerEditor({ imageUrl, onCornersDetected, onCornersEdited, onTransfor
     if (!previewRef.current || !imageRef.current || !corners) return
 
     try {
+      const optimalSize = calculateOptimalOutputSize(corners)
+      const maxPreviewSize = 400
+      const scale = Math.min(
+        maxPreviewSize / optimalSize.width,
+        maxPreviewSize / optimalSize.height
+      )
+      const previewWidth = Math.floor(optimalSize.width * scale)
+      const previewHeight = Math.floor(optimalSize.height * scale)
+
       const transformedCanvas = await transformPerspectiveCanvas(
         imageRef.current,
         corners,
-        400,
-        500
+        optimalSize.width,
+        optimalSize.height
       )
       const previewCtx = previewRef.current.getContext('2d')
-      previewRef.current.width = transformedCanvas.width
-      previewRef.current.height = transformedCanvas.height
-      previewCtx.drawImage(transformedCanvas, 0, 0)
+      previewRef.current.width = previewWidth
+      previewRef.current.height = previewHeight
+      previewCtx.drawImage(transformedCanvas, 0, 0, previewWidth, previewHeight)
     } catch (error) {
       // Игнорируем ошибки превью
     }
-  }
-
-  const handleMouseDown = (e, index) => {
-    setDraggingIndex(index)
   }
 
   const handleMouseMove = (e) => {
@@ -238,7 +229,7 @@ function CornerEditor({ imageUrl, onCornersDetected, onCornersEdited, onTransfor
     const x = (e.clientX - rect.left) * scaleX
     const y = (e.clientY - rect.top) * scaleY
 
-    // Проверяем, кликнули ли мы на угол
+    // Проверяем, кликнули ли на угол
     const threshold = 20
     for (let i = 0; i < corners.length; i++) {
       const corner = corners[i]
@@ -261,30 +252,13 @@ function CornerEditor({ imageUrl, onCornersDetected, onCornersEdited, onTransfor
 
     setIsTransforming(true)
     try {
-      // Вычисляем размеры выходного изображения на основе углов
-      const width1 = Math.sqrt(
-        Math.pow(corners[1].x - corners[0].x, 2) + Math.pow(corners[1].y - corners[0].y, 2)
-      )
-      const width2 = Math.sqrt(
-        Math.pow(corners[2].x - corners[3].x, 2) + Math.pow(corners[2].y - corners[3].y, 2)
-      )
-      const height1 = Math.sqrt(
-        Math.pow(corners[3].x - corners[0].x, 2) + Math.pow(corners[3].y - corners[0].y, 2)
-      )
-      const height2 = Math.sqrt(
-        Math.pow(corners[2].x - corners[1].x, 2) + Math.pow(corners[2].y - corners[1].y, 2)
-      )
-
-      const outputWidth = Math.max(width1, width2)
-      const outputHeight = Math.max(height1, height2)
-
+      const optimalSize = calculateOptimalOutputSize(corners)
       const transformedCanvas = await transformPerspectiveCanvas(
         imageRef.current,
         corners,
-        outputWidth,
-        outputHeight
+        optimalSize.width,
+        optimalSize.height
       )
-      
       onTransformComplete?.(transformedCanvas)
     } catch (error) {
       // Игнорируем ошибки трансформации
@@ -360,5 +334,3 @@ function CornerEditor({ imageUrl, onCornersDetected, onCornersEdited, onTransfor
 }
 
 export default CornerEditor
-
-

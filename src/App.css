@@ -5,7 +5,7 @@
 }
 
 .app-header {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #667eea;
   color: white;
   padding: 2rem;
   text-align: center;
@@ -81,6 +81,30 @@
   box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
 }
 
+.app-footer {
+  background: transparent;
+  padding: 1.5rem;
+  text-align: center;
+  margin-top: auto;
+}
+
+.app-footer p {
+  font-size: 0.9rem;
+  margin: 0;
+  color: #666;
+}
+
+.app-footer a {
+  color: #667eea;
+  text-decoration: none;
+  transition: color 0.3s ease;
+}
+
+.app-footer a:hover {
+  color: #764ba2;
+  text-decoration: underline;
+}
+
 @media (max-width: 768px) {
   .app-header h1 {
     font-size: 2rem;
@@ -88,6 +112,14 @@
 
   .app-main {
     padding: 1rem;
+  }
+
+  .app-footer {
+    padding: 1rem;
+  }
+
+  .app-footer p {
+    font-size: 0.85rem;
   }
 }
 
