@@ -39,7 +39,7 @@
 }
 
 .btn-auto {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #667eea;
   color: white;
 }
 
@@ -49,7 +49,7 @@
 }
 
 .btn-document {
-  background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+  background: #667eea;
   color: white;
 }
 
@@ -111,7 +111,7 @@
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #667eea;
   cursor: pointer;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
   transition: all 0.2s ease;
@@ -126,7 +126,7 @@
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #667eea;
   cursor: pointer;
   border: none;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);

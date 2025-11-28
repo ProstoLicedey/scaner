@@ -120,15 +120,35 @@ export async function detectCorners(imageElement) {
       // Морфологические операции для очистки
       const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
       const morphed = new cv.Mat();
-      cv.morphologyEx(thresh, morphed, cv.MORPH_OPEN, kernel, new cv.Point(-1, -1), 1);
+      cv.morphologyEx(
+        thresh,
+        morphed,
+        cv.MORPH_OPEN,
+        kernel,
+        new cv.Point(-1, -1),
+        1
+      );
 
       const closed = new cv.Mat();
-      cv.morphologyEx(morphed, closed, cv.MORPH_CLOSE, kernel, new cv.Point(-1, -1), 2);
+      cv.morphologyEx(
+        morphed,
+        closed,
+        cv.MORPH_CLOSE,
+        kernel,
+        new cv.Point(-1, -1),
+        2
+      );
 
       // Находим контуры
       const contours = new cv.MatVector();
       const hierarchy = new cv.Mat();
-      cv.findContours(closed, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+      cv.findContours(
+        closed,
+        contours,
+        hierarchy,
+        cv.RETR_EXTERNAL,
+        cv.CHAIN_APPROX_SIMPLE
+      );
 
       // Ищем наибольший контур (белый лист)
       let maxArea = 0;
@@ -177,7 +197,11 @@ export async function detectCorners(imageElement) {
         // Обрабатываем количество точек
         let finalCorners = corners;
         if (corners.length > 4) {
-          finalCorners = selectFourCorners(corners, imageElement.width, imageElement.height);
+          finalCorners = selectFourCorners(
+            corners,
+            imageElement.width,
+            imageElement.height
+          );
         } else if (corners.length < 4) {
           const defaultCorners = [
             { x: 0, y: 0 },
@@ -242,108 +266,4 @@ function sortCorners(corners) {
   }
 
   return result;
-}
-
-// Альтернативный метод без OpenCV (использует Canvas API)
-export async function detectCornersSimple(imageElement) {
-  return new Promise((resolve) => {
-    const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d");
-    canvas.width = imageElement.width;
-    canvas.height = imageElement.height;
-    ctx.drawImage(imageElement, 0, 0);
-
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const data = imageData.data;
-
-    // Вычисляем среднюю яркость для определения порога
-    let sum = 0;
-    const brightnessValues = [];
-    for (let i = 0; i < data.length; i += 4) {
-      const brightness = (data[i] + data[i + 1] + data[i + 2]) / 3;
-      brightnessValues.push(brightness);
-      sum += brightness;
-    }
-    const avgBrightness = sum / brightnessValues.length;
-    const threshold = Math.min(200, avgBrightness + 30);
-
-    // Создаем бинарное изображение
-    const binary = new Array(canvas.width * canvas.height).fill(0);
-    for (let i = 0; i < brightnessValues.length; i++) {
-      if (brightnessValues[i] >= threshold) {
-        binary[i] = 1;
-      }
-    }
-
-    // Находим границы белой области
-    let topEdge = -1, bottomEdge = -1, leftEdge = -1, rightEdge = -1;
-    const margin = Math.min(canvas.width, canvas.height) * 0.05;
-    const scanMargin = Math.max(10, margin);
-
-    // Сканируем сверху вниз
-    for (let y = scanMargin; y < canvas.height - scanMargin; y++) {
-      let whiteCount = 0;
-      for (let x = scanMargin; x < canvas.width - scanMargin; x++) {
-        if (binary[y * canvas.width + x] === 1) whiteCount++;
-      }
-      if (whiteCount > (canvas.width - 2 * scanMargin) * 0.3) {
-        topEdge = y;
-        break;
-      }
-    }
-
-    // Сканируем снизу вверх
-    for (let y = canvas.height - scanMargin; y >= scanMargin; y--) {
-      let whiteCount = 0;
-      for (let x = scanMargin; x < canvas.width - scanMargin; x++) {
-        if (binary[y * canvas.width + x] === 1) whiteCount++;
-      }
-      if (whiteCount > (canvas.width - 2 * scanMargin) * 0.3) {
-        bottomEdge = y;
-        break;
-      }
-    }
-
-    // Сканируем слева направо
-    for (let x = scanMargin; x < canvas.width - scanMargin; x++) {
-      let whiteCount = 0;
-      for (let y = scanMargin; y < canvas.height - scanMargin; y++) {
-        if (binary[y * canvas.width + x] === 1) whiteCount++;
-      }
-      if (whiteCount > (canvas.height - 2 * scanMargin) * 0.3) {
-        leftEdge = x;
-        break;
-      }
-    }
-
-    // Сканируем справа налево
-    for (let x = canvas.width - scanMargin; x >= scanMargin; x--) {
-      let whiteCount = 0;
-      for (let y = scanMargin; y < canvas.height - scanMargin; y++) {
-        if (binary[y * canvas.width + x] === 1) whiteCount++;
-      }
-      if (whiteCount > (canvas.height - 2 * scanMargin) * 0.3) {
-        rightEdge = x;
-        break;
-      }
-    }
-
-    // Формируем углы
-    if (topEdge !== -1 && bottomEdge !== -1 && leftEdge !== -1 && rightEdge !== -1) {
-      const corners = [
-        { x: Math.max(0, leftEdge - scanMargin), y: Math.max(0, topEdge - scanMargin) },
-        { x: Math.min(canvas.width, rightEdge + scanMargin), y: Math.max(0, topEdge - scanMargin) },
-        { x: Math.min(canvas.width, rightEdge + scanMargin), y: Math.min(canvas.height, bottomEdge + scanMargin) },
-        { x: Math.max(0, leftEdge - scanMargin), y: Math.min(canvas.height, bottomEdge + scanMargin) },
-      ];
-      resolve(sortCorners(corners));
-    } else {
-      resolve(sortCorners([
-        { x: 0, y: 0 },
-        { x: canvas.width, y: 0 },
-        { x: canvas.width, y: canvas.height },
-        { x: 0, y: canvas.height },
-      ]));
-    }
-  });
 }

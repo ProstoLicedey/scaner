@@ -86,6 +86,7 @@ export function applyDenoise(imageData, value) {
   const width = imageData.width
   const height = imageData.height
   const original = new Uint8ClampedArray(imageData.data)
+
   const radius = Math.floor((value / 100) * 2)
 
   for (let y = radius; y < height - radius; y++) {
@@ -268,50 +269,49 @@ export function applyBinarization(imageData, value) {
 }
 
 // Улучшает белый фон документа
-export function applyWhiteBackground(imageData, value) {
-  if (value === 0) return imageData
+export function applyBinarization(imageData, value) {
+  if (value === 0) return imageData;
 
-  const strength = value / 100
-  const data = new Uint8ClampedArray(imageData.data)
+  const strength = value / 100;
+  const width = imageData.width;
+  const height = imageData.height;
 
-  // Определяем порог фона через гистограмму
-  const histogram = new Array(256).fill(0)
-  for (let i = 0; i < data.length; i += 4) {
-    const brightness = Math.round((data[i] + data[i + 1] + data[i + 2]) / 3)
-    histogram[brightness]++
-  }
+  // 1) Конвертация ImageData → Mat
+  let src = cv.matFromImageData(imageData);
 
-  let cumulative = 0
-  const targetPixels = Math.floor((data.length / 4) * 0.1)
-  let backgroundThreshold = 200
+  // 2) Перевод в градации серого
+  let gray = new cv.Mat();
+  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
-  for (let i = 255; i >= 0; i--) {
-    cumulative += histogram[i]
-    if (cumulative >= targetPixels) {
-      backgroundThreshold = i
-      break
-    }
-  }
+  // 3) OTSU — вместо ручной гистограммы + поиска порога
+  let bin = new cv.Mat();
+  cv.threshold(gray, bin, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
 
-  // Осветляем фон
-  const thresholdLow = backgroundThreshold * 0.8
-  const thresholdRange = backgroundThreshold * 0.2
+  // 4) Перевод бинарного обратно в RGBA, чтобы смешать как у тебя
+  let binColor = new cv.Mat();
+  cv.cvtColor(bin, binColor, cv.COLOR_GRAY2RGBA);
 
-  for (let i = 0; i < data.length; i += 4) {
-    const brightness = (data[i] + data[i + 1] + data[i + 2]) / 3
+  // 5) Та же логика плавной бинаризации через strength
+  let blended = new cv.Mat();
+  cv.addWeighted(src, 1 - strength, binColor, strength, 0, blended);
 
-    if (brightness > thresholdLow) {
-      const factor = Math.min(1, (brightness - thresholdLow) / thresholdRange)
-      const whiteBoost = strength * factor * (255 - brightness)
+  // 6) Возврат ImageData (как у тебя)
+  const output = new ImageData(
+    new Uint8ClampedArray(blended.data),
+    width,
+    height
+  );
 
-      data[i] = Math.min(255, data[i] + whiteBoost)
-      data[i + 1] = Math.min(255, data[i + 1] + whiteBoost)
-      data[i + 2] = Math.min(255, data[i + 2] + whiteBoost)
-    }
-  }
+  // Очистка памяти OpenCV (важно!)
+  src.delete();
+  gray.delete();
+  bin.delete();
+  binColor.delete();
+  blended.delete();
 
-  return new ImageData(data, imageData.width, imageData.height)
+  return output;
 }
+
 
 // Улучшение текста
 export function applyTextEnhancement(imageData, value) {

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { detectCorners, detectCornersSimple } from '../utils/cornerDetection'
+import { detectCorners } from '../utils/cornerDetection'
 import { transformPerspectiveCanvas, calculateOptimalOutputSize } from '../utils/perspectiveTransform'
 import LoadingOverlay from './LoadingOverlay'
 import './CornerEditor.css'
@@ -25,45 +25,46 @@ function CornerEditor({ imageUrl, onCornersDetected, onCornersEdited, onTransfor
       updatePreview()
     }
   }, [corners])
+const detectCornersAutomatically = async () => {
+  if (!imageRef.current) return
 
-  const detectCornersAutomatically = async () => {
-    if (!imageRef.current) return
-
-    if (!imageRef.current.complete || imageRef.current.naturalWidth === 0) {
-      imageRef.current.onload = () => {
-        detectCornersAutomatically()
-      }
-      return
+  if (!imageRef.current.complete || imageRef.current.naturalWidth === 0) {
+    imageRef.current.onload = () => {
+      detectCornersAutomatically()
     }
-
-    setIsDetecting(true)
-    try {
-      if (typeof cv === 'undefined' || !cv.Mat || !cv.imread) {
-        await loadOpenCV()
-      }
-
-      let detectedCorners
-      try {
-        detectedCorners = await detectCorners(imageRef.current)
-      } catch (openCvError) {
-        detectedCorners = await detectCornersSimple(imageRef.current)
-      }
-      setCorners(detectedCorners)
-      onCornersDetected?.(detectedCorners)
-    } catch (error) {
-      const defaultCorners = [
-        { x: 0, y: 0 },
-        { x: imageRef.current.width, y: 0 },
-        { x: imageRef.current.width, y: imageRef.current.height },
-        { x: 0, y: imageRef.current.height }
-      ]
-      setCorners(defaultCorners)
-      onCornersDetected?.(defaultCorners)
-      alert('Не удалось автоматически определить углы документа. Используйте углы по умолчанию или настройте их вручную.')
-    } finally {
-      setIsDetecting(false)
-    }
+    return
   }
+
+  setIsDetecting(true)
+  try {
+    if (typeof cv === 'undefined' || !cv.Mat || !cv.imread) {
+      await loadOpenCV()
+    }
+
+    let detectedCorners
+    try {
+      detectedCorners = await detectCorners(imageRef.current)
+    } catch (openCvError) {
+      throw openCvError 
+    }
+    
+    setCorners(detectedCorners)
+    onCornersDetected?.(detectedCorners)
+  } catch (error) {
+
+    const defaultCorners = [
+      { x: 0, y: 0 },
+      { x: imageRef.current.width, y: 0 },
+      { x: imageRef.current.width, y: imageRef.current.height },
+      { x: 0, y: imageRef.current.height }
+    ]
+    setCorners(defaultCorners)
+    onCornersDetected?.(defaultCorners)
+    alert('Не удалось автоматически определить углы документа. Используйте углы по умолчанию или настройте их вручную.')
+  } finally {
+    setIsDetecting(false)
+  }
+}
 
   const loadOpenCV = () => {
     return new Promise((resolve, reject) => {

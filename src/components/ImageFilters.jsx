@@ -17,12 +17,12 @@ function ImageFilters({ filters, onFiltersChange }) {
   const handleChange = (key, value) => {
     const newFilters = { ...localFilters, [key]: parseFloat(value) }
     setLocalFilters(newFilters) // Обновляем UI сразу для плавности
-    
+
     // Очищаем предыдущий таймер
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current)
     }
-    
+
     // Применяем фильтры с задержкой 300ms после остановки движения слайдера
     debounceTimerRef.current = setTimeout(() => {
       onFiltersChange(newFilters)
@@ -38,45 +38,21 @@ function ImageFilters({ filters, onFiltersChange }) {
     }
   }, [])
 
-  const handleAutoEnhance = () => {
-    // Очищаем таймер дебаунсинга
-    if (debounceTimerRef.current) {
-      clearTimeout(debounceTimerRef.current)
-    }
-    
-    // Автоматические значения для улучшения документов
-    const autoFilters = {
-      brightness: 5,
-      contrast: 20,
-      sharpness: 35,
-      saturation: -30, // Убираем цвет для документов
-      denoise: 15,
-      temperature: 0,
-      tint: 0,
-      binarization: 0,
-      whiteBackground: 40,
-      textEnhancement: 50
-    }
-    setLocalFilters(autoFilters)
-    onFiltersChange(autoFilters)
-  }
-
   const handleDocumentMode = () => {
-    // Очищаем таймер дебаунсинга
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current)
     }
-    
+
     // Оптимальные настройки для документов A4 с текстом
     const documentFilters = {
       brightness: 0,
       contrast: 30,
       sharpness: 45,
       saturation: -80, // Почти черно-белое
-      denoise: 20,
+      denoise: 40, // Увеличено для лучшего подавления шумов
       temperature: 0,
       tint: 0,
-      binarization: 60,
+      binarization: 70, // Увеличено для лучшей очистки от шумов
       whiteBackground: 60,
       textEnhancement: 70
     }
@@ -89,7 +65,7 @@ function ImageFilters({ filters, onFiltersChange }) {
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current)
     }
-    
+
     const resetFilters = {
       brightness: 0,
       contrast: 0,
@@ -111,11 +87,8 @@ function ImageFilters({ filters, onFiltersChange }) {
       <div className="filters-header">
         <h2>Фильтры изображения</h2>
         <div className="filter-actions">
-          <button onClick={handleAutoEnhance} className="btn btn-auto">
-            Авто-улучшение
-          </button>
           <button onClick={handleDocumentMode} className="btn btn-document">
-            Режим документа
+            Авто-улучшение
           </button>
           <button onClick={handleReset} className="btn btn-reset">
             Сброс
