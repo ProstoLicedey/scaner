@@ -1,456 +1,469 @@
-// Применяет коррекцию яркости
-export function applyBrightness(imageData, value) {
-  const data = new Uint8ClampedArray(imageData.data)
-  const factor = value / 100
-
-  for (let i = 0; i < data.length; i += 4) {
-    data[i] = Math.min(255, Math.max(0, data[i] + factor * 255))
-    data[i + 1] = Math.min(255, Math.max(0, data[i + 1] + factor * 255))
-    data[i + 2] = Math.min(255, Math.max(0, data[i + 2] + factor * 255))
-  }
-
-  return new ImageData(data, imageData.width, imageData.height)
+/**
+ * Вспомогательная функция для конвертации ImageData в cv.Mat
+ */
+function imageDataToMat(imageData) {
+  return cv.matFromImageData(imageData);
 }
 
-// Применяет коррекцию контраста
-export function applyContrast(imageData, value) {
-  const data = new Uint8ClampedArray(imageData.data)
-  const factor = (259 * (value + 255)) / (255 * (259 - value))
-
-  for (let i = 0; i < data.length; i += 4) {
-    data[i] = Math.min(255, Math.max(0, factor * (data[i] - 128) + 128))
-    data[i + 1] = Math.min(255, Math.max(0, factor * (data[i + 1] - 128) + 128))
-    data[i + 2] = Math.min(255, Math.max(0, factor * (data[i + 2] - 128) + 128))
+/**
+ * Вспомогательная функция для конвертации cv.Mat обратно в ImageData
+ */
+function matToImageData(mat) {
+  // Убедимся, что у нас 4 канала (RGBA)
+  let img;
+  if (mat.channels() === 1) {
+    img = new cv.Mat();
+    cv.cvtColor(mat, img, cv.COLOR_GRAY2RGBA);
+  } else if (mat.channels() === 3) {
+    img = new cv.Mat();
+    cv.cvtColor(mat, img, cv.COLOR_RGB2RGBA);
+  } else {
+    img = mat;
   }
 
-  return new ImageData(data, imageData.width, imageData.height)
+  const imgData = new ImageData(
+    new Uint8ClampedArray(img.data),
+    img.cols,
+    img.rows
+  );
+
+  if (img !== mat) img.delete();
+  return imgData;
 }
 
-// Применяет повышение резкости
-export function applySharpness(imageData, value) {
-  if (value === 0) return imageData
+// ==========================================
+// ВНУТРЕННИЕ ФУНКЦИИ (Работают напрямую с Mat)
+// ==========================================
 
-  const data = new Uint8ClampedArray(imageData.data)
-  const width = imageData.width
-  const height = imageData.height
-  const strength = value / 100
-  const original = new Uint8ClampedArray(imageData.data)
+function _doBrightness(src, dst, value) {
+  const factor = value / 100;
+  // alpha = 1 (контраст не меняем), beta = сдвиг яркости
+  src.convertTo(dst, -1, 1, factor * 255);
+}
 
-  for (let y = 1; y < height - 1; y++) {
-    for (let x = 1; x < width - 1; x++) {
-      for (let c = 0; c < 3; c++) {
-        const idx = (y * width + x) * 4 + c
+function _doContrast(src, dst, value) {
+  // Формула контраста: F = 259(C+255) / 255(259-C)
+  // Pixel = F * (Pixel - 128) + 128  =>  Pixel * F + (128 - 128*F)
+  // alpha = F, beta = 128 * (1 - F)
 
-        // Вычисляем лапласиан (вторую производную)
-        const laplacian =
-          -original[idx] +
-          (original[((y - 1) * width + x) * 4 + c] +
-            original[((y + 1) * width + x) * 4 + c] +
-            original[(y * width + x - 1) * 4 + c] +
-            original[(y * width + x + 1) * 4 + c]) /
-            4
+  // Защита от деления на ноль при value = 259 (хотя вход обычно -100..100)
+  if (value === 259) value = 258;
 
-        data[idx] = Math.min(255, Math.max(0, original[idx] + strength * laplacian))
-      }
-    }
+  const factor = (259 * (value + 255)) / (255 * (259 - value));
+  const alpha = factor;
+  const beta = 128 * (1 - factor);
+
+  src.convertTo(dst, -1, alpha, beta);
+}
+
+function _doSharpness(src, dst, value) {
+  if (value === 0) {
+    src.copyTo(dst);
+    return;
+  }
+  const strength = value / 100;
+
+  // Unsharp Masking: Original + Strength * (Original - Blurred)
+  // Это эквивалент повышения резкости через вычитание размытой копии
+  let blurred = new cv.Mat();
+  // Используем GaussianBlur для создания нерезкой маски
+  cv.GaussianBlur(src, blurred, new cv.Size(0, 0), 3);
+
+  // dst = src * (1 + strength) + blurred * (-strength) + 0
+  cv.addWeighted(src, 1 + strength, blurred, -strength, 0, dst);
+
+  blurred.delete();
+}
+
+function _doSaturation(src, dst, value) {
+  if (value === 0) {
+    src.copyTo(dst);
+    return;
+  }
+  const factor = value / 100;
+
+  // Реализация через смешивание с Grayscale (как в оригинале)
+  let gray = new cv.Mat();
+  let grayRGB = new cv.Mat();
+
+  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+  cv.cvtColor(gray, grayRGB, cv.COLOR_GRAY2RGBA);
+
+  // dst = gray * (-factor) + src * (1 + factor) ??
+  // Формула оригинала: gray + (color - gray) * (1 + factor)
+  // = gray + color(1+f) - gray(1+f) = color(1+f) - gray*f
+
+  cv.addWeighted(src, 1 + factor, grayRGB, -factor, 0, dst);
+
+  gray.delete();
+  grayRGB.delete();
+}
+
+function _doDenoise(src, dst, value) {
+  if (value === 0) {
+    src.copyTo(dst);
+    return;
+  }
+  // value / 100 * 2 -> radius. Ksize = 2*radius + 1
+  // Для медианного фильтра ksize должен быть нечетным и > 1
+  let ksize = Math.floor((value / 100) * 2) * 2 + 1;
+  if (ksize < 3) ksize = 3;
+
+  cv.medianBlur(src, dst, ksize);
+}
+
+function _doColorCorrection(src, dst, temperature, tint) {
+  if (temperature === 0 && tint === 0) {
+    src.copyTo(dst);
+    return;
   }
 
-  return new ImageData(data, width, height)
-}
+  const tempFactor = temperature / 100;
+  const tintFactor = tint / 100;
 
-// Применяет коррекцию насыщенности
-export function applySaturation(imageData, value) {
-  const data = new Uint8ClampedArray(imageData.data)
-  const factor = value / 100
+  // Разделяем каналы для быстрой арифметики
+  let planes = new cv.MatVector();
+  cv.split(src, planes);
+  let r = planes.get(0);
+  let g = planes.get(1);
+  let b = planes.get(2);
+  let a = planes.get(3); // Альфа канал, если есть
 
-  for (let i = 0; i < data.length; i += 4) {
-    const r = data[i]
-    const g = data[i + 1]
-    const b = data[i + 2]
-
-    const gray = 0.299 * r + 0.587 * g + 0.114 * b
-
-    data[i] = Math.min(255, Math.max(0, gray + (r - gray) * (1 + factor)))
-    data[i + 1] = Math.min(255, Math.max(0, gray + (g - gray) * (1 + factor)))
-    data[i + 2] = Math.min(255, Math.max(0, gray + (b - gray) * (1 + factor)))
-  }
-
-  return new ImageData(data, imageData.width, imageData.height)
-}
-
-// Применяет шумоподавление (медианный фильтр)
-export function applyDenoise(imageData, value) {
-  if (value === 0) return imageData
-
-  const data = new Uint8ClampedArray(imageData.data)
-  const width = imageData.width
-  const height = imageData.height
-  const original = new Uint8ClampedArray(imageData.data)
-
-  const radius = Math.floor((value / 100) * 2)
-
-  for (let y = radius; y < height - radius; y++) {
-    for (let x = radius; x < width - radius; x++) {
-      for (let c = 0; c < 3; c++) {
-        const values = []
-
-        for (let dy = -radius; dy <= radius; dy++) {
-          for (let dx = -radius; dx <= radius; dx++) {
-            const idx = ((y + dy) * width + x + dx) * 4 + c
-            values.push(original[idx])
-          }
-        }
-
-        values.sort((a, b) => a - b)
-        const median = values[Math.floor(values.length / 2)]
-        const idx = (y * width + x) * 4 + c
-        data[idx] = median
-      }
-    }
-  }
-
-  return new ImageData(data, width, height)
-}
-
-// Применяет коррекцию цвета (температура и оттенок)
-export function applyColorCorrection(imageData, temperature, tint) {
-  const data = new Uint8ClampedArray(imageData.data)
-  const tempFactor = temperature / 100
-  const tintFactor = tint / 100
-
-  for (let i = 0; i < data.length; i += 4) {
-    let r = data[i]
-    let g = data[i + 1]
-    let b = data[i + 2]
-
-    // Коррекция температуры
+  // Коррекция температуры (R+, B-)
+  if (tempFactor !== 0) {
+    let shift = tempFactor * 30;
+    // Используем add/subtract с скаляром, OpenCV сам обрежет 0..255
     if (tempFactor > 0) {
-      r = Math.min(255, r + tempFactor * 30)
-      b = Math.max(0, b - tempFactor * 30)
+      cv.add(r, new cv.Mat(r.rows, r.cols, r.type(), new cv.Scalar(shift)), r);
+      cv.subtract(
+        b,
+        new cv.Mat(b.rows, b.cols, b.type(), new cv.Scalar(shift)),
+        b
+      );
     } else {
-      r = Math.max(0, r + tempFactor * 30)
-      b = Math.min(255, b - tempFactor * 30)
+      cv.subtract(
+        r,
+        new cv.Mat(r.rows, r.cols, r.type(), new cv.Scalar(Math.abs(shift))),
+        r
+      );
+      cv.add(
+        b,
+        new cv.Mat(b.rows, b.cols, b.type(), new cv.Scalar(Math.abs(shift))),
+        b
+      );
     }
-
-    // Коррекция оттенка
-    if (tintFactor > 0) {
-      g = Math.min(255, g + tintFactor * 20)
-      r = Math.max(0, r - tintFactor * 10)
-      b = Math.max(0, b - tintFactor * 10)
-    } else {
-      g = Math.max(0, g + tintFactor * 20)
-      r = Math.min(255, r - tintFactor * 10)
-      b = Math.min(255, b - tintFactor * 10)
-    }
-
-    data[i] = Math.round(r)
-    data[i + 1] = Math.round(g)
-    data[i + 2] = Math.round(b)
   }
 
-  return new ImageData(data, imageData.width, imageData.height)
+  // Коррекция оттенка (G+, R-, B-)
+  if (tintFactor !== 0) {
+    let gShift = tintFactor * 20;
+    let rbShift = tintFactor * 10;
+
+    if (tintFactor > 0) {
+      cv.add(g, new cv.Mat(g.rows, g.cols, g.type(), new cv.Scalar(gShift)), g);
+      cv.subtract(
+        r,
+        new cv.Mat(r.rows, r.cols, r.type(), new cv.Scalar(rbShift)),
+        r
+      );
+      cv.subtract(
+        b,
+        new cv.Mat(b.rows, b.cols, b.type(), new cv.Scalar(rbShift)),
+        b
+      );
+    } else {
+      cv.subtract(
+        g,
+        new cv.Mat(g.rows, g.cols, g.type(), new cv.Scalar(Math.abs(gShift))),
+        g
+      );
+      cv.add(
+        r,
+        new cv.Mat(r.rows, r.cols, r.type(), new cv.Scalar(Math.abs(rbShift))),
+        r
+      );
+      cv.add(
+        b,
+        new cv.Mat(b.rows, b.cols, b.type(), new cv.Scalar(Math.abs(rbShift))),
+        b
+      );
+    }
+  }
+
+  cv.merge(planes, dst);
+
+  planes.delete();
+  r.delete();
+  g.delete();
+  b.delete();
+  a.delete();
+}
+
+function _doBinarization(src, dst, value) {
+  if (value === 0) {
+    src.copyTo(dst);
+    return;
+  }
+  const strength = value / 100;
+
+  let gray = new cv.Mat();
+  let bin = new cv.Mat();
+  let binRGB = new cv.Mat();
+
+  // Грейскейл
+  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+
+  // OTSU Thresholding (автоматический поиск порога)
+  cv.threshold(gray, bin, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
+
+  // Конвертируем обратно в RGB для смешивания
+  cv.cvtColor(bin, binRGB, cv.COLOR_GRAY2RGBA);
+
+  // Смешивание оригинала и бинарного изображения по силе эффекта
+  cv.addWeighted(src, 1 - strength, binRGB, strength, 0, dst);
+
+  gray.delete();
+  bin.delete();
+  binRGB.delete();
+}
+
+function _doTextEnhancement(src, dst, value) {
+  if (value === 0) {
+    src.copyTo(dst);
+    return;
+  }
+  const strength = value / 100;
+
+  // Аналог "Unsharp Mask" с большим радиусом для локального контраста текста
+  // В оригинале используется локальное среднее (local mean)
+  let blurred = new cv.Mat();
+  // Ksize ~ 9 как в оригинале, или адаптивный от размера
+  cv.GaussianBlur(src, blurred, new cv.Size(9, 9), 0);
+
+  // Усиление разницы между оригиналом и локальным средним
+  // dst = src + (src - blurred) * strength * 2 (условно)
+  cv.addWeighted(src, 1 + strength, blurred, -strength, 0, dst);
+
+  blurred.delete();
+}
+
+function _doWhiteBackground(src, dst, value) {
+  if (value === 0) {
+    src.copyTo(dst);
+    return;
+  }
+  // Упрощенная логика: "выбивание" фона
+  // Можно использовать адаптивный порог, но для слайдера value
+  // лучше подойдет гамма-коррекция или Levels, чтобы сделать светлые участки белыми
+
+  // Реализация "Levels": сдвигаем точку белого влево
+  const factor = value / 100;
+  const threshold = 255 - factor * 50; // Чем больше value, тем ниже порог белого
+
+  // Умножаем пиксели так, чтобы threshold стал 255
+  const alpha = 255 / threshold;
+  src.convertTo(dst, -1, alpha, 0);
+}
+
+// ==========================================
+// ЭКСПОРТИРУЕМЫЕ ФУНКЦИИ (ImageData wrapper)
+// ==========================================
+
+export function applyBrightness(imageData, value) {
+  let src = imageDataToMat(imageData);
+  let dst = new cv.Mat();
+  _doBrightness(src, dst, value);
+  let res = matToImageData(dst);
+  src.delete();
+  dst.delete();
+  return res;
+}
+
+export function applyContrast(imageData, value) {
+  let src = imageDataToMat(imageData);
+  let dst = new cv.Mat();
+  _doContrast(src, dst, value);
+  let res = matToImageData(dst);
+  src.delete();
+  dst.delete();
+  return res;
+}
+
+export function applySharpness(imageData, value) {
+  let src = imageDataToMat(imageData);
+  let dst = new cv.Mat();
+  _doSharpness(src, dst, value);
+  let res = matToImageData(dst);
+  src.delete();
+  dst.delete();
+  return res;
+}
+
+export function applySaturation(imageData, value) {
+  let src = imageDataToMat(imageData);
+  let dst = new cv.Mat();
+  _doSaturation(src, dst, value);
+  let res = matToImageData(dst);
+  src.delete();
+  dst.delete();
+  return res;
+}
+
+export function applyDenoise(imageData, value) {
+  let src = imageDataToMat(imageData);
+  let dst = new cv.Mat();
+  _doDenoise(src, dst, value);
+  let res = matToImageData(dst);
+  src.delete();
+  dst.delete();
+  return res;
+}
+
+export function applyColorCorrection(imageData, temperature, tint) {
+  let src = imageDataToMat(imageData);
+  let dst = new cv.Mat();
+  _doColorCorrection(src, dst, temperature, tint);
+  let res = matToImageData(dst);
+  src.delete();
+  dst.delete();
+  return res;
+}
+
+// Применяет бинаризацию (Оцу)
+export function applyBinarization(imageData, value) {
+  let src = imageDataToMat(imageData);
+  let dst = new cv.Mat();
+  _doBinarization(src, dst, value);
+  let res = matToImageData(dst);
+  src.delete();
+  dst.delete();
+  return res;
+}
+
+// Улучшает белый фон документа (переименованная вторая applyBinarization)
+export function applyWhiteBackground(imageData, value) {
+  let src = imageDataToMat(imageData);
+  let dst = new cv.Mat();
+  _doWhiteBackground(src, dst, value);
+  let res = matToImageData(dst);
+  src.delete();
+  dst.delete();
+  return res;
+}
+
+export function applyTextEnhancement(imageData, value) {
+  let src = imageDataToMat(imageData);
+  let dst = new cv.Mat();
+  _doTextEnhancement(src, dst, value);
+  let res = matToImageData(dst);
+  src.delete();
+  dst.delete();
+  return res;
 }
 
 // Автоматическое улучшение изображения
 export function autoEnhance(imageData) {
-  let result = imageData
-
-  const brightness = calculateAutoBrightness(result)
-  result = applyBrightness(result, brightness)
-
-  const contrast = calculateAutoContrast(result)
-  result = applyContrast(result, contrast)
-
-  result = applySharpness(result, 20)
-  result = applySaturation(result, 10)
-  result = applyDenoise(result, 15)
-
-  return result
-}
-
-function calculateAutoBrightness(imageData) {
-  let sum = 0
-  let count = 0
-
-  for (let i = 0; i < imageData.data.length; i += 4) {
-    const gray =
-      0.299 * imageData.data[i] +
-      0.587 * imageData.data[i + 1] +
-      0.114 * imageData.data[i + 2]
-    sum += gray
-    count++
-  }
-
-  const avg = sum / count
-  return ((128 - avg) / 128) * 50
-}
-
-function calculateAutoContrast(imageData) {
-  let min = 255
-  let max = 0
-
-  for (let i = 0; i < imageData.data.length; i += 4) {
-    const gray =
-      0.299 * imageData.data[i] +
-      0.587 * imageData.data[i + 1] +
-      0.114 * imageData.data[i + 2]
-    min = Math.min(min, gray)
-    max = Math.max(max, gray)
-  }
-
-  const range = max - min
-  if (range < 50) {
-    return Math.min(50, (50 - range) / 2)
-  }
-
-  return 0
-}
-
-// Применяет бинаризацию (черно-белое преобразование)
-export function applyBinarization(imageData, value) {
-  if (value === 0) return imageData
-
-  const strength = value / 100
-  const data = new Uint8ClampedArray(imageData.data)
-  const width = imageData.width
-  const height = imageData.height
-
-  // Вычисляем порог методом Оцу
-  const histogram = new Array(256).fill(0)
-  for (let i = 0; i < data.length; i += 4) {
-    const gray = Math.round(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2])
-    histogram[gray]++
-  }
-
-  let total = width * height
-  let sum = 0
-  for (let i = 0; i < 256; i++) {
-    sum += i * histogram[i]
-  }
-
-  let sumB = 0
-  let wB = 0
-  let wF = 0
-  let maxVariance = 0
-  let threshold = 128
-
-  for (let i = 0; i < 256; i++) {
-    wB += histogram[i]
-    if (wB === 0) continue
-    wF = total - wB
-    if (wF === 0) break
-
-    sumB += i * histogram[i]
-    let mB = sumB / wB
-    let mF = (sum - sumB) / wF
-    let variance = wB * wF * (mB - mF) * (mB - mF)
-
-    if (variance > maxVariance) {
-      maxVariance = variance
-      threshold = i
-    }
-  }
-
-  // Применяем бинаризацию
-  for (let i = 0; i < data.length; i += 4) {
-    const gray = Math.round(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2])
-    const binaryValue = gray > threshold ? 255 : 0
-
-    const r = Math.round(data[i] * (1 - strength) + binaryValue * strength)
-    const g = Math.round(data[i + 1] * (1 - strength) + binaryValue * strength)
-    const b = Math.round(data[i + 2] * (1 - strength) + binaryValue * strength)
-
-    data[i] = Math.min(255, Math.max(0, r))
-    data[i + 1] = Math.min(255, Math.max(0, g))
-    data[i + 2] = Math.min(255, Math.max(0, b))
-  }
-
-  return new ImageData(data, width, height)
-}
-
-// Улучшает белый фон документа
-export function applyBinarization(imageData, value) {
-  if (value === 0) return imageData;
-
-  const strength = value / 100;
-  const width = imageData.width;
-  const height = imageData.height;
-
-  // 1) Конвертация ImageData → Mat
-  let src = cv.matFromImageData(imageData);
-
-  // 2) Перевод в градации серого
+  // Конвертируем один раз для анализа
+  let src = imageDataToMat(imageData);
   let gray = new cv.Mat();
   cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
-  // 3) OTSU — вместо ручной гистограммы + поиска порога
-  let bin = new cv.Mat();
-  cv.threshold(gray, bin, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
+  // 1. Auto Brightness Calculation
+  // Аналог calculateAutoBrightness (mean value)
+  let mean = cv.mean(gray);
+  let avg = mean[0];
+  const brightnessVal = ((128 - avg) / 128) * 50;
 
-  // 4) Перевод бинарного обратно в RGBA, чтобы смешать как у тебя
-  let binColor = new cv.Mat();
-  cv.cvtColor(bin, binColor, cv.COLOR_GRAY2RGBA);
+  // 2. Auto Contrast Calculation
+  // Аналог calculateAutoContrast (minMaxLoc)
+  let minMax = cv.minMaxLoc(gray);
+  const range = minMax.maxVal - minMax.minVal;
+  let contrastVal = 0;
+  if (range < 50) {
+    contrastVal = Math.min(50, (50 - range) / 2);
+  }
 
-  // 5) Та же логика плавной бинаризации через strength
-  let blended = new cv.Mat();
-  cv.addWeighted(src, 1 - strength, binColor, strength, 0, blended);
-
-  // 6) Возврат ImageData (как у тебя)
-  const output = new ImageData(
-    new Uint8ClampedArray(blended.data),
-    width,
-    height
-  );
-
-  // Очистка памяти OpenCV (важно!)
-  src.delete();
+  // Освобождаем временные ресурсы
   gray.delete();
-  bin.delete();
-  binColor.delete();
-  blended.delete();
+  src.delete();
 
-  return output;
+  // Применяем фильтры (используя applyAllFilters для эффективности)
+  // Мы создаем объект filters как в applyAllFilters
+  const filters = {
+    brightness: brightnessVal,
+    contrast: contrastVal,
+    sharpness: 20,
+    saturation: 10,
+    denoise: 15,
+    // Остальные нули
+    temperature: 0,
+    tint: 0,
+    whiteBackground: 0,
+    textEnhancement: 0,
+    binarization: 0,
+  };
+
+  return applyAllFilters(imageData, filters);
 }
 
-
-// Улучшение текста
-export function applyTextEnhancement(imageData, value) {
-  if (value === 0) return imageData
-
-  const strength = value / 100
-  const data = new Uint8ClampedArray(imageData.data)
-  const width = imageData.width
-  const height = imageData.height
-  const original = new Uint8ClampedArray(imageData.data)
-
-  // Конвертируем в grayscale
-  const grayscale = new Uint8ClampedArray(width * height)
-  for (let i = 0; i < data.length; i += 4) {
-    grayscale[i / 4] = Math.round(0.299 * original[i] + 0.587 * original[i + 1] + 0.114 * original[i + 2])
-  }
-
-  // Вычисляем глобальное среднее
-  let globalSum = 0
-  for (let i = 0; i < grayscale.length; i++) {
-    globalSum += grayscale[i]
-  }
-  const globalMean = globalSum / grayscale.length
-
-  // Вычисляем локальные средние для каждого N-го пикселя
-  const step = Math.max(4, Math.floor(Math.min(width, height) / 50))
-  const blockSize = 9
-  const halfBlock = Math.floor(blockSize / 2)
-  const localMeans = new Float32Array(width * height)
-
-  for (let y = 0; y < height; y += step) {
-    for (let x = 0; x < width; x += step) {
-      let sum = 0
-      let count = 0
-
-      for (let dy = -halfBlock; dy <= halfBlock; dy++) {
-        for (let dx = -halfBlock; dx <= halfBlock; dx++) {
-          const nx = Math.max(0, Math.min(width - 1, x + dx))
-          const ny = Math.max(0, Math.min(height - 1, y + dy))
-          sum += grayscale[ny * width + nx]
-          count++
-        }
-      }
-
-      localMeans[y * width + x] = sum / count
-    }
-  }
-
-  // Применяем улучшение с интерполяцией
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const idx = (y * width + x) * 4
-      const gray = grayscale[y * width + x]
-
-      const x1 = Math.floor(x / step) * step
-      const x2 = Math.min(width - 1, x1 + step)
-      const y1 = Math.floor(y / step) * step
-      const y2 = Math.min(height - 1, y1 + step)
-
-      // Билинейная интерполяция
-      const mean = (localMeans[y1 * width + x1] || globalMean) *
-                   ((x2 - x) / step) * ((y2 - y) / step) +
-                   (localMeans[y1 * width + x2] || globalMean) *
-                   ((x - x1) / step) * ((y2 - y) / step) +
-                   (localMeans[y2 * width + x1] || globalMean) *
-                   ((x2 - x) / step) * ((y - y1) / step) +
-                   (localMeans[y2 * width + x2] || globalMean) *
-                   ((x - x1) / step) * ((y - y1) / step)
-
-      const diff = Math.abs(gray - mean)
-
-      // Усиливаем контраст в областях с вариацией (текст)
-      if (diff > 20) {
-        const contrastFactor = 1 + strength * 0.5
-        const threshold = mean
-
-        let newGray
-        if (gray > threshold) {
-          newGray = Math.min(255, threshold + (gray - threshold) * contrastFactor)
-        } else {
-          newGray = Math.max(0, threshold - (threshold - gray) * contrastFactor)
-        }
-
-        const factor = newGray / (gray || 1)
-        data[idx] = Math.min(255, Math.max(0, original[idx] * factor))
-        data[idx + 1] = Math.min(255, Math.max(0, original[idx + 1] * factor))
-        data[idx + 2] = Math.min(255, Math.max(0, original[idx + 2] * factor))
-      } else if (gray > 200) {
-        // Осветляем фон
-        const lightenFactor = 1 + strength * 0.2
-        data[idx] = Math.min(255, original[idx] * lightenFactor)
-        data[idx + 1] = Math.min(255, original[idx + 1] * lightenFactor)
-        data[idx + 2] = Math.min(255, original[idx + 2] * lightenFactor)
-      }
-    }
-  }
-
-  return new ImageData(data, width, height)
-}
-
-// Применяет все фильтры к изображению
+// Применяет все фильтры к изображению (ОПТИМИЗИРОВАННАЯ ВЕРСИЯ)
 export function applyAllFilters(imageData, filters) {
-  let result = imageData
+  // Вместо того чтобы гонять ImageData <-> Mat много раз,
+  // мы создаем Mat один раз и модифицируем его.
+
+  let mat = imageDataToMat(imageData);
+  let tempMat = new cv.Mat(); // буфер для операций
 
   if (filters.brightness !== 0) {
-    result = applyBrightness(result, filters.brightness)
+    _doBrightness(mat, tempMat, filters.brightness);
+    tempMat.copyTo(mat);
   }
 
   if (filters.contrast !== 0) {
-    result = applyContrast(result, filters.contrast)
+    _doContrast(mat, tempMat, filters.contrast);
+    tempMat.copyTo(mat);
   }
 
   if (filters.sharpness !== 0) {
-    result = applySharpness(result, filters.sharpness)
+    _doSharpness(mat, tempMat, filters.sharpness);
+    tempMat.copyTo(mat);
   }
 
   if (filters.saturation !== 0) {
-    result = applySaturation(result, filters.saturation)
+    _doSaturation(mat, tempMat, filters.saturation);
+    tempMat.copyTo(mat);
   }
 
   if (filters.denoise !== 0) {
-    result = applyDenoise(result, filters.denoise)
+    _doDenoise(mat, tempMat, filters.denoise);
+    tempMat.copyTo(mat);
   }
 
   if (filters.temperature !== 0 || filters.tint !== 0) {
-    result = applyColorCorrection(result, filters.temperature, filters.tint)
+    _doColorCorrection(mat, tempMat, filters.temperature, filters.tint);
+    tempMat.copyTo(mat);
   }
 
   if (filters.whiteBackground !== 0) {
-    result = applyWhiteBackground(result, filters.whiteBackground)
+    _doWhiteBackground(mat, tempMat, filters.whiteBackground);
+    tempMat.copyTo(mat);
   }
 
   if (filters.textEnhancement !== 0) {
-    result = applyTextEnhancement(result, filters.textEnhancement)
+    _doTextEnhancement(mat, tempMat, filters.textEnhancement);
+    tempMat.copyTo(mat);
   }
 
   if (filters.binarization !== 0) {
-    result = applyBinarization(result, filters.binarization)
+    _doBinarization(mat, tempMat, filters.binarization);
+    tempMat.copyTo(mat);
   }
 
-  return result
+  let result = matToImageData(mat);
+
+  // Очистка
+  mat.delete();
+  tempMat.delete();
+
+  return result;
 }
